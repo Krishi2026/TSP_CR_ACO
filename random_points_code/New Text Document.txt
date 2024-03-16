@@ -1,0 +1,195 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+from scipy.spatial.distance import pdist, squareform
+import string
+import time
+from itertools import combinations
+
+
+# Constants for ACO
+NUM_ANTS = 10
+NUM_ITERATIONS_ACO = 100
+EVAPORATION_RATE = 0.5
+ALPHA = 1
+BETA = 2
+N_BEST = 5
+
+
+def calculate_distances(points):
+    return squareform(pdist(points, metric='euclidean'))
+
+
+def create_complete_graph(point_count, distances):
+    G = nx.Graph()
+    for i, j in combinations(range(point_count), 2):
+        G.add_edge(i, j, weight=distances[i][j])
+    return G
+
+
+def mst_dfs_path(G, start=0):
+    T = nx.minimum_spanning_tree(G)
+    path = list(nx.dfs_preorder_nodes(T, source=start))
+    path.append(start)
+    return path
+
+
+def calculate_distances(points):
+    return squareform(pdist(points, metric='euclidean'))
+
+
+def calculate_path_distance(path, distances):
+    return sum(distances[path[i], path[(i + 1) % len(path)]] for i in range(len(path)))
+
+
+def run_christofides_algorithm(points, distances, start_point):
+    start_time = time.time()
+    complete_graph = create_complete_graph(len(points), distances)
+    path_christofides = mst_dfs_path(complete_graph, start=start_point)
+    total_distance_christofides = calculate_path_distance(path_christofides, distances)
+    end_time = time.time()
+    print(f"Christofides Algorithm took {(end_time - start_time):.8f} seconds.")
+    return path_christofides, total_distance_christofides
+
+
+def run_aco_algorithm(points, distances, start_point):
+    start_time = time.time()
+    num_points = len(points)
+    pheromone = np.ones((num_points, num_points))
+
+
+    best_path = None
+    best_distance = float('inf')
+
+
+    for _ in range(NUM_ITERATIONS_ACO):
+        paths = []
+        path_distances = []
+
+
+        for _ in range(NUM_ANTS):
+            path = [start_point]
+            visited = set(path)
+
+
+            for _ in range(num_points - 1):
+                current = path[-1]
+                probabilities = []
+
+
+                for next_point in range(num_points):
+                    if next_point not in visited:
+                        tau = pheromone[current][next_point] ** ALPHA
+                        eta = (1.0 / distances[current][next_point]) ** BETA
+                        probabilities.append(tau * eta)
+                    else:
+                        probabilities.append(0)
+
+
+                probabilities = np.array(probabilities)
+                probabilities /= probabilities.sum()
+                next_point = np.random.choice(range(num_points), p=probabilities)
+                path.append(next_point)
+                visited.add(next_point)
+
+
+            path.append(start_point)
+            paths.append(path)
+            path_distances.append(calculate_path_distance(path, distances))
+
+
+        min_distance_index = np.argmin(path_distances)
+        if path_distances[min_distance_index] < best_distance:
+            best_distance = path_distances[min_distance_index]
+            best_path = paths[min_distance_index]
+
+
+        sorted_paths = np.argsort(path_distances)
+        pheromone *= (1 - EVAPORATION_RATE)
+        for i in range(min(N_BEST, len(sorted_paths))):
+            path_index = sorted_paths[i]
+            path = paths[path_index]
+            path_distance = path_distances[path_index]
+            for i in range(num_points):
+                pheromone[path[i]][path[(i + 1) % num_points]] += 1.0 / path_distance
+
+
+    end_time = time.time()
+    print(f"ACO Algorithm took {(end_time - start_time):.8f} seconds.")
+    return best_path, best_distance
+
+
+def plot(points, path, distances, title="", show_complete_graph=False, show_all_weights=False):
+    plt.figure(figsize=(10, 10))
+    x = points[:, 0]
+    y = points[:, 1]
+
+
+    if show_complete_graph:
+        for i in range(len(points)):
+            for j in range(len(points)):
+                if i != j:
+                    plt.plot(*zip(*points[[i, j]]), color='gray', linestyle='dashed', zorder=1)
+                    if show_all_weights:
+                        mid_point = (points[i] + points[j]) / 2
+                        plt.text(mid_point[0], mid_point[1], f"{distances[i][j]:.2f}", fontsize=8, color='black', ha='center', va='center', zorder=2)
+
+
+    for i in range(len(path) - 1):
+        plt.plot(*zip(*points[[path[i], path[i + 1]]]), color='blue', zorder=2)
+        if show_all_weights:
+            weight = distances[path[i], path[i + 1]]
+            plt.text((x[path[i]] + x[path[i + 1]]) / 2, (y[path[i]] + y[path[i + 1]]) / 2, f"{weight:.2f}", fontsize=8, color='black', weight='bold', ha='center', va='center', zorder=6)
+
+
+    plt.scatter(x, y, s=100, color='red', zorder=5)
+
+
+    if path:
+        start_point = points[path[0]]
+        plt.scatter(start_point[0], start_point[1], s=100, color='green', zorder=5)
+
+
+    for i, (x_i, y_i) in enumerate(zip(x, y)):
+        plt.annotate(str(i), (x_i, y_i), color='white', weight='bold', fontsize=8, ha='center', va='center', zorder=6)
+
+
+    plt.title(title)
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.show()
+
+
+def get_label(index):
+    alphabet = string.ascii_uppercase
+    if index < len(alphabet):
+        return alphabet[index]
+    else:
+        return alphabet[(index // len(alphabet)) - 1] + alphabet[index % len(alphabet)]
+
+
+def main():
+    point_count = int(input("Enter the number of points: "))
+    np.random.seed(0)
+    points = np.random.rand(point_count, 2)
+    distances = calculate_distances(points)
+
+
+    start_point = np.random.randint(point_count)
+    print(f"Using {start_point} as the starting point for both algorithms.")
+
+
+    path_christofides, total_distance_christofides = run_christofides_algorithm(points, distances, start_point)
+    print("Best Path (Christofides):", path_christofides)
+    print("Best Path Distance (Christofides):", total_distance_christofides)
+    plot(points, path_christofides, distances, title="Christofides Algorithm", show_complete_graph=True, show_all_weights=True)
+
+
+    path_aco, total_distance_aco = run_aco_algorithm(points, distances, start_point)
+    print("Best Path (ACO):", path_aco)
+    print("Best Path Distance (ACO):", total_distance_aco)
+    plot(points, path_aco, distances, title="ACO Algorithm", show_complete_graph=True, show_all_weights=True)
+
+
+if __name__ == "__main__":
+    main()
