@@ -1,0 +1,188 @@
+
+
+import time
+import pandas as pd
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+import networkx as nx
+import plotly.graph_objects as go
+import plotly.express as px
+
+# Make sure the haversine_distance function and AntColonyOptimizer class are defined above this
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371  # Radius of the Earth in km
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat / 2) * math.sin(dLat / 2) + math.cos(math.radians(lat1)) \
+        * math.cos(math.radians(lat2)) * math.sin(dLon / 2) * math.sin(dLon / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+class AntColonyOptimizer:
+    def __init__(self, distances, n_ants, n_best, n_iterations, decay, alpha=1, beta=1):
+        self.distances = distances
+        self.pheromone = np.ones(distances.shape) / len(distances)
+        self.all_inds = range(len(distances))
+        self.n_ants = n_ants
+        self.n_best = n_best
+        self.n_iterations = n_iterations
+        self.decay = decay
+        self.alpha = alpha
+        self.beta = beta
+
+    def run(self):
+        shortest_path = None
+        all_time_shortest_path = ("placeholder", np.inf)
+        for i in range(self.n_iterations):
+            all_paths = self.gen_all_paths()
+            self.spread_pheromone(all_paths, self.n_best, shortest_path=shortest_path)
+            shortest_path = min(all_paths, key=lambda x: x[1])
+            if shortest_path[1] < all_time_shortest_path[1]:
+                all_time_shortest_path = shortest_path
+            self.pheromone *= self.decay
+        return all_time_shortest_path
+
+    def spread_pheromone(self, all_paths, n_best, shortest_path):
+        sorted_paths = sorted(all_paths, key=lambda x: x[1])
+        for path, dist in sorted_paths[:n_best]:
+            for move in path:
+                self.pheromone[move] += 1.0 / self.distances[move]
+
+    def gen_path_dist(self, path):
+        total_dist = 0
+        for ele in path:
+            total_dist += self.distances[ele]
+        return total_dist
+
+    def gen_all_paths(self):
+        all_paths = []
+        for i in range(self.n_ants):
+            path = self.gen_path(0)
+            all_paths.append((path, self.gen_path_dist(path)))
+        return all_paths
+
+    def gen_path(self, start):
+        path = []
+        visited = set()
+        visited.add(start)
+        prev = start
+        for i in range(len(self.distances) - 1):
+            move = self.pick_move(self.pheromone[prev], self.distances[prev], visited)
+            path.append((prev, move))
+            prev = move
+            visited.add(move)
+        path.append((prev, start))  # going back to the start
+        return path
+
+    def pick_move(self, pheromone, dist, visited):
+        pheromone = np.copy(pheromone)
+        pheromone[list(visited)] = 0
+        row = pheromone ** self.alpha * ((1.0 / dist) ** self.beta)
+        norm_row = row / row.sum()
+        move = np.random.choice(self.all_inds, 1, p=norm_row)[0]
+        return move
+
+    def indices_to_cities(self, indices, df):
+        return [df.iloc[i]['City'] for i in indices]
+
+
+def read_input(file_path, n):
+    df = pd.read_csv(file_path, nrows=n)
+    return df
+
+
+def main():
+    start_time = time.time()  # Start measuring total runtime
+
+    file_path = 'Data_set/cities_usa.csv'  # Update with your file path
+    n = int(input("Enter the number of cities: "))
+    df = read_input(file_path, n)
+
+    precomputed_distances = np.zeros((len(df), len(df)))
+    total_graph_distance = 0  # Initialize total graph distance
+
+    for i in range(len(df)):
+        for j in range(len(df)):
+            if i != j:
+                distance = haversine_distance(
+                    df.iloc[i]['Latitude'], df.iloc[i]['Longitude'],
+                    df.iloc[j]['Latitude'], df.iloc[j]['Longitude']
+                )
+                precomputed_distances[i, j] = distance
+                total_graph_distance += distance  # Summing up all distances
+            else:
+                precomputed_distances[i, j] = np.inf
+
+    # Divide by 2 because each distance is counted twice in an undirected graph
+    total_graph_distance /= 2
+
+    aco = AntColonyOptimizer(distances=precomputed_distances, n_ants=10, n_best=5, n_iterations=100, decay=0.5, alpha=1, beta=2)
+
+    algorithm_start_time = time.time()  # Start measuring algorithm runtime
+    path, total_distance = aco.run()
+    algorithm_end_time = time.time()  # End measuring algorithm runtime
+
+    print(f"Runtime of the ACO algorithm: {algorithm_end_time - algorithm_start_time} seconds")
+    print("Total Distance of Optimal Path:", total_distance)
+    print("Total Distance of the Graph:", total_graph_distance)
+
+    path_indices = [edge[0] for edge in path] + [path[0][0]]
+    path_cities = aco.indices_to_cities(path_indices, df)
+    print("Optimal Path:", path_cities)
+
+    # Visualization with NetworkX
+    G = nx.Graph()
+    start_node = path_indices[0]
+    for i, row in df.iterrows():
+        G.add_node(i, label=row['City'])
+    for i in range(len(path_indices) - 1):
+        start = path_indices[i]
+        end = path_indices[i + 1]
+        distance = precomputed_distances[start, end]
+        G.add_edge(start, end, weight=distance, label=f"{distance:.2f} km")
+    pos = {i: (row['Longitude'], row['Latitude']) for i, row in df.iterrows()}
+    non_start_nodes = [node for node in G.nodes if node != start_node]
+    nx.draw_networkx_nodes(G, pos, nodelist=non_start_nodes, node_color='lightblue', node_size=500)
+    nx.draw_networkx_nodes(G, pos, nodelist=[start_node], node_color='green', node_size=500)
+    node_labels = nx.get_node_attributes(G, 'label')
+    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
+    nx.draw_networkx_edges(G, pos, edge_color='gray')
+    edge_labels = nx.get_edge_attributes(G, 'label')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
+    plt.title('Optimal Path with Distances')
+    plt.show()
+
+    # Visualization with Plotly
+    fig = px.scatter_mapbox(df, lat='Latitude', lon='Longitude', hover_name='City', zoom=3, height=600, size_max=15)
+    for i in range(len(path_indices) - 1):
+        start_idx = path_indices[i]
+        end_idx = path_indices[i + 1]
+        fig.add_trace(go.Scattermapbox(
+            lat=[df.iloc[start_idx]['Latitude'], df.iloc[end_idx]['Latitude']],
+            lon=[df.iloc[start_idx]['Longitude'], df.iloc[end_idx]['Longitude']],
+            mode='lines+markers+text',
+            name='Best Path',
+            marker=go.scattermapbox.Marker(size=4),
+            line=go.scattermapbox.Line(color='blue', width=2),
+            text=[f"{df.iloc[start_idx]['City']}\n({df.iloc[start_idx]['Latitude']:.2f}, {df.iloc[start_idx]['Longitude']:.2f})",
+                  f"{df.iloc[end_idx]['City']}\n({df.iloc[end_idx]['Latitude']:.2f}, {df.iloc[end_idx]['Longitude']:.2f})"],
+            textposition="top right"
+        ))
+    fig.add_trace(go.Scattermapbox(
+        lat=[df.iloc[start_node]['Latitude']],
+        lon=[df.iloc[start_node]['Longitude']],
+        mode='markers+text',
+        marker=go.scattermapbox.Marker(size=8, color='green'),
+        text=[f"{df.iloc[start_node]['City']}\n({df.iloc[start_node]['Latitude']:.2f}, {df.iloc[start_node]['Longitude']:.2f})"],
+        textposition="top right"
+    ))
+    fig.update_layout(mapbox_style="carto-positron")
+    fig.show()
+
+    end_time = time.time()  # End measuring total runtime
+    print(f"Total runtime of the program: {end_time - start_time} seconds")
+
+if __name__ == "__main__":
+    main()

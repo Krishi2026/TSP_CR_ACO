@@ -1,0 +1,200 @@
+#chris ds
+
+import pandas as pd
+import numpy as np
+import networkx as nx
+from scipy.spatial.distance import pdist, squareform
+from itertools import combinations, chain
+import matplotlib.pyplot as plt  # Make sure to import matplotlib
+import random
+from math import radians, sin, cos, asin, sqrt
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+import time
+
+file_path = 'Data_set/cities_usa.csv'  # Adjust this to the path of your CSV file
+df = pd.read_csv(file_path)
+
+def calculate_distances(coords):
+    """Calculate a distance matrix for the coords using Euclidean distance."""
+    return squareform(pdist(coords, metric='euclidean'))
+
+def create_complete_graph(point_count, distances):
+    G = nx.Graph()
+    for i, j in combinations(range(point_count), 2):
+        G.add_edge(i, j, weight=distances[i][j])
+    return G
+
+
+def find_odd_degree_nodes(T):
+    return [v for v, d in T.degree() if d % 2 == 1]
+
+def form_minimum_weight_matching(G, odd_degree_nodes):
+    bipartite_graph = nx.Graph()
+    max_weight = max(G[u][v]['weight'] for u, v in combinations(G, 2)) + 1
+    for i, u in enumerate(odd_degree_nodes):
+        for j, v in enumerate(odd_degree_nodes):
+            if j > i:
+                weight = G[u][v]['weight']
+                bipartite_graph.add_edge(u, v, weight=max_weight - weight)
+    matching = nx.algorithms.matching.max_weight_matching(bipartite_graph, maxcardinality=True)
+    return matching
+
+def christofides_algorithm(coords):
+    G = create_complete_graph(len(coords), calculate_distances(coords))
+    T = nx.minimum_spanning_tree(G)
+    odd_degree_nodes = find_odd_degree_nodes(T)
+    matching = form_minimum_weight_matching(G, odd_degree_nodes)
+    multi_graph = nx.MultiGraph(T)
+    multi_graph.add_edges_from(matching)
+    eulerian_circuit = list(nx.eulerian_circuit(multi_graph))
+    path = list(dict.fromkeys(chain.from_iterable(eulerian_circuit)))
+    path.append(path[0])  # make it a circuit
+    return path
+
+def read_input(file_path, n):
+    df = pd.read_csv(file_path, nrows=n)
+    cities = df['City'].tolist()
+    coords = df[['Latitude', 'Longitude']].to_numpy()
+    return cities, coords
+
+def haversine(coord1, coord2):
+    """Calculate the great-circle distance between two points on the Earth."""
+    lat1, lon1 = coord1
+    lat2, lon2 = coord2
+    # Convert decimal degrees to radians
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    # Haversine formula
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371  # Radius of Earth in kilometers
+    return c * r
+
+def jitter_coords(coords, jitter_amount=0.02):  # Increased jitter_amount
+    """Apply a small random jitter to coordinates to prevent overlap."""
+    jittered_coords = []
+    for coord in coords:
+        lat_jitter = coord[0] + random.uniform(-jitter_amount, jitter_amount)
+        lon_jitter = coord[1] + random.uniform(-jitter_amount, jitter_amount)
+        jittered_coords.append((lat_jitter, lon_jitter))
+    return jittered_coords
+
+
+def calculate_total_graph_distance(G, coords):
+    """Calculate the total distance for all edges in the complete graph."""
+    total_distance = 0
+    for u, v in G.edges():
+        total_distance += haversine(coords[u], coords[v])
+    return total_distance
+
+def plot_optimal_path(cities, coords, path):
+    jittered_coords = jitter_coords(coords)
+    G = nx.Graph()
+    pos = {i: (jittered_coords[i][1], jittered_coords[i][0]) for i in range(len(jittered_coords))}
+    for i in range(len(path) - 1):
+        G.add_edge(path[i], path[i + 1])
+
+    # Dynamically adjust figure size and node size
+    node_count = len(cities)
+    fig_size = max(16, node_count / 3)  # Increase the figure size if necessary
+    node_size = max(500, 15000 / node_count)  # Adjust node size inversely with the number of nodes
+
+    plt.figure(figsize=(fig_size, fig_size))
+    nx.draw(G, pos, with_labels=True, labels={i: city for i, city in enumerate(cities)},
+            node_color='lightblue', node_size=node_size, font_size=8)
+    nx.draw_networkx_edges(G, pos, edgelist=[(path[i], path[i + 1]) for i in range(len(path) - 1)], edge_color='gray')
+
+    # Draw the starting node in green
+    start_node = path[0]
+    nx.draw_networkx_nodes(G, pos, nodelist=[start_node], node_size=node_size, node_color='green')
+
+    # Calculate and draw edge labels (distances using Haversine formula)
+    edge_labels = {}
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        distance = haversine(jittered_coords[u], jittered_coords[v])
+        edge_labels[(u, v)] = f"{distance:.2f} km"
+
+
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
+
+    plt.title("Optimal Path with Distances")
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.show()
+
+def main():
+    start_time = time.time()  # Start timing for complete program runtime
+
+
+    file_path = 'Data_set/cities_usa.csv'
+    df = pd.read_csv(file_path)
+    n = int(input("Enter the number of cities: "))
+    cities, coords = read_input(file_path, n)
+    G = create_complete_graph(len(coords), calculate_distances(coords))  # Create complete graph for total distance calculation
+
+
+    algo_start_time = time.time()
+    optimal_path_indices = christofides_algorithm(coords)
+    algo_end_time = time.time()
+
+
+    total_distance_optimal = sum(haversine(coords[optimal_path_indices[i]], coords[optimal_path_indices[i + 1]])
+                                 for i in range(len(optimal_path_indices) - 1))
+    total_distance_complete = calculate_total_graph_distance(G, coords)
+
+
+    optimal_path = [cities[idx] for idx in optimal_path_indices]
+
+
+    # Plotly visualization (fig2)
+    fig2 = px.scatter_mapbox(df[:n], lat="Latitude", lon="Longitude", hover_name="City", zoom=3, height=600, size_max=8)
+    fig2.add_trace(go.Scattermapbox(
+        lat=[coords[idx][0] for idx in optimal_path_indices],
+        lon=[coords[idx][1] for idx in optimal_path_indices],
+        mode='markers+lines',
+        name='Best Path',
+        marker=go.scattermapbox.Marker(size=4),
+        line=go.scattermapbox.Line(width=1, color='steelblue'),
+        text=[cities[idx] for idx in optimal_path_indices],
+        textposition="top center"
+    ))
+
+
+    starting_point = coords[optimal_path_indices[0]]
+    starting_city = cities[optimal_path_indices[0]]
+    fig2.add_trace(go.Scattermapbox(
+        lat=[starting_point[0]],
+        lon=[starting_point[1]],
+        mode='markers+text',
+        name='Starting Point',
+        text=[starting_city],
+        hoverinfo='text',
+        marker=go.scattermapbox.Marker(size=8, color='red')
+    ))
+
+
+    fig2.update_layout(mapbox_style="carto-positron")
+    fig2.show()
+
+
+    # Print the runtime and distance information
+    print("The optimal path is:")
+    print(" -> ".join(optimal_path))
+   
+    plot_optimal_path(cities, coords, optimal_path_indices)
+
+
+    end_time = time.time()  # End timing for complete program runtime
+    print(f"Total Distance of the Optimal Path: {total_distance_optimal:.2f} km")
+    print(f"Total Distance of the Complete Graph: {total_distance_complete:.2f} km")  # Display total distance of complete graph
+    print(f"Algorithm Runtime: {algo_end_time - algo_start_time:.8f} seconds")
+    print(f"Total Runtime: {end_time - start_time:.8f} seconds")
+   
+
+
+if __name__ == "__main__":
+    main()
