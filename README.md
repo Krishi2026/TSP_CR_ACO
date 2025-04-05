@@ -62,8 +62,3 @@ The algorithms were tested on both synthetic data and a real-world dataset of U.
 - Visualizations:
   - 📉 Static Graphs (Matplotlib)
   - 🗺️ Interactive Maps (Plotly)
-
----
-
-## 📁 Project Structure
-
